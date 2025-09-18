@@ -75,14 +75,21 @@ class XianyuLive:
             return None
 
     async def token_refresh_loop(self):
-        """Token刷新循环"""
+        """Token刷新循环
+        
+        提前10分钟刷新token，避免token过期导致的连接中断
+        """
+        REFRESH_AHEAD_TIME = 600  # 提前10分钟刷新
+        
         while True:
             try:
                 current_time = time.time()
+                time_since_last_refresh = current_time - self.last_token_refresh_time
+                time_until_expiry = self.token_refresh_interval - time_since_last_refresh
                 
                 # 检查是否需要刷新token
-                if current_time - self.last_token_refresh_time >= self.token_refresh_interval:
-                    logger.info("Token即将过期，准备刷新...")
+                if time_until_expiry <= REFRESH_AHEAD_TIME:
+                    logger.info(f"Token将在{time_until_expiry:.0f}秒后过期，开始提前刷新...")
                     
                     new_token = await self.refresh_token()
                     if new_token:
@@ -94,15 +101,24 @@ class XianyuLive:
                             await self.ws.close()
                         break
                     else:
-                        logger.error("Token刷新失败，将在{}分钟后重试".format(self.token_retry_interval // 60))
-                        await asyncio.sleep(self.token_retry_interval)  # 使用配置的重试间隔
+                        # 如果刷新失败，根据剩余时间调整重试间隔
+                        if time_until_expiry < 300:  # 如果剩余时间小于5分钟
+                            retry_interval = min(60, time_until_expiry / 5)  # 更频繁地重试
+                        else:
+                            retry_interval = min(self.token_retry_interval, time_until_expiry / 2)
+                            
+                        logger.error(f"Token刷新失败，将在{retry_interval:.0f}秒后重试")
+                        logger.info(f"距离Token过期还有{time_until_expiry:.0f}秒")
+                        await asyncio.sleep(retry_interval)
                         continue
                 
-                # 每分钟检查一次
-                await asyncio.sleep(60)
+                # 动态调整检查间隔
+                check_interval = min(60, max(10, time_until_expiry / 10))  # 至少10秒，最多60秒
+                await asyncio.sleep(check_interval)
                 
             except Exception as e:
                 logger.error(f"Token刷新循环出错: {e}")
+                logger.error("将在60秒后重试")
                 await asyncio.sleep(60)
 
     async def send_msg(self, ws, cid, toid, text):
@@ -427,26 +443,31 @@ class XianyuLive:
                 
             item_description = f"{item_info['desc']};当前商品售卖价格为:{str(item_info['soldPrice'])}"
             
-            # 获取完整的对话上下文
-            context = self.context_manager.get_context_by_chat(chat_id)
-            # 生成回复
-            bot_reply = bot.generate_reply(
-                send_message,
-                item_description,
-                context=context
-            )
-            
-            # 检查是否为价格意图，如果是则增加议价次数
-            if bot.last_intent == "price":
-                self.context_manager.increment_bargain_count_by_chat(chat_id)
-                bargain_count = self.context_manager.get_bargain_count_by_chat(chat_id)
-                logger.info(f"用户 {send_user_name} 对商品 {item_id} 的议价次数: {bargain_count}")
-            
-            # 添加机器人回复到上下文
-            self.context_manager.add_message_by_chat(chat_id, self.myid, item_id, "assistant", bot_reply)
-            
-            logger.info(f"机器人回复: {bot_reply}")
-            await self.send_msg(websocket, chat_id, send_user_id, bot_reply)
+            if True:
+                # 获取完整的对话上下文
+                context = self.context_manager.get_context_by_chat(chat_id)
+                # 生成回复
+                bot_reply = bot.generate_reply(
+                    send_message,
+                    item_description,
+                    context=context
+                )
+                
+                # 检查是否为价格意图，如果是则增加议价次数
+                if bot.last_intent == "price":
+                    self.context_manager.increment_bargain_count_by_chat(chat_id)
+                    bargain_count = self.context_manager.get_bargain_count_by_chat(chat_id)
+                    logger.info(f"用户 {send_user_name} 对商品 {item_id} 的议价次数: {bargain_count}")
+                
+                # 添加机器人回复到上下文
+                self.context_manager.add_message_by_chat(chat_id, self.myid, item_id, "assistant", bot_reply)
+                
+                logger.info(f"机器人回复: {bot_reply}")
+                await self.send_msg(websocket, chat_id, send_user_id, bot_reply)
+            else:    
+                # await self.send_msg(websocket, chat_id, send_user_id, bot_reply)
+                logger.info('TODO 暂时不回复')
+                pass
             
         except Exception as e:
             logger.error(f"处理消息时发生错误: {str(e)}")
@@ -537,7 +558,7 @@ class XianyuLive:
                     self.heartbeat_task = asyncio.create_task(self.heartbeat_loop(websocket))
                     
                     # 启动token刷新任务
-                    self.token_refresh_task = asyncio.create_task(self.token_refresh_loop())
+                    # self.token_refresh_task = asyncio.create_task(self.token_refresh_loop())
                     
                     async for message in websocket:
                         try:
