@@ -9,6 +9,38 @@ from utils.xianyu_utils import generate_sign
 
 
 class XianyuApis:
+    def _post_wrapper(self, url, **kwargs):
+        """Post请求的包装器，用于打印请求和响应信息
+        
+        Args:
+            url: 请求URL
+            **kwargs: requests.post的其他参数
+            
+        Returns:
+            requests.Response: 响应对象
+        """
+        # 打印请求信息
+        logger.debug(f"POST请求 URL: {url}")
+        if 'headers' in kwargs:
+            logger.debug(f"请求头: {kwargs['headers']}")
+        if 'params' in kwargs:
+            logger.debug(f"URL参数: {kwargs['params']}")
+        if 'data' in kwargs:
+            logger.debug(f"请求体: {kwargs['data']}")
+            
+        # 发送请求
+        response = self.session.post(url, **kwargs)
+        
+        # 打印响应信息
+        logger.debug(f"响应状态码: {response.status_code}")
+        logger.debug(f"响应头: {dict(response.headers)}")
+        try:
+            logger.debug(f"响应内容: {response.json()}")
+        except:
+            logger.debug(f"响应内容: {response.text[:200]}...")  # 只打印前200个字符
+            
+        return response
+
     def __init__(self):
         proxy = os.getenv("XIANYU_PROXY", None)
         self.url = 'https://h5api.m.goofish.com/h5/mtop.taobao.idlemessage.pc.login.token/1.0/'
@@ -148,7 +180,7 @@ class XianyuApis:
                     'deviceId': self.session.cookies.get('cna', '')
                 }
                 
-                response = self.session.post(url, params=params, data=data)
+                response = self._post_wrapper(url, params=params, data=data)
                 res_json = response.json()
                 
                 if res_json.get('content', {}).get('success'):
@@ -245,8 +277,9 @@ class XianyuApis:
             params['sign'] = sign
             
             try:
-                response = self.session.post('https://h5api.m.goofish.com/h5/mtop.taobao.idlemessage.pc.login.token/1.0/', params=params, data=data)
+                response = self._post_wrapper('https://h5api.m.goofish.com/h5/mtop.taobao.idlemessage.pc.login.token/1.0/', params=params, data=data)
                 res_json = response.json()
+                logger.info(f"Token API响应: {res_json}")
                 
                 if isinstance(res_json, dict):
                     ret_value = res_json.get('ret', [])
@@ -269,7 +302,7 @@ class XianyuApis:
                             logger.info(f"请求频率限制，等待{wait_time}秒后重试")
                             time.sleep(wait_time)
                         else:
-                            time.sleep(0.5)
+                            time.sleep(10.5)
                             
                         current_retry += 1
                         continue
@@ -285,18 +318,18 @@ class XianyuApis:
                 else:
                     logger.error(f"Token API返回格式异常: {res_json}")
                     logger.error("这可能是API结构发生变化导致的")
-                    time.sleep(0.5)
+                    time.sleep(10.5)
                     current_retry += 1
                     continue
                     
             except requests.exceptions.RequestException as e:
                 logger.error(f"Token API网络请求异常: {str(e)}")
-                time.sleep(1)  # 网络错误等待更长时间
+                time.sleep(10)  # 网络错误等待更长时间
                 current_retry += 1
                 continue
             except Exception as e:
                 logger.error(f"Token API未知异常: {str(e)}")
-                time.sleep(0.5)
+                time.sleep(10.5)
                 current_retry += 1
                 continue
 
@@ -331,7 +364,7 @@ class XianyuApis:
                 sign = generate_sign(params['t'], token, data_val)
                 params['sign'] = sign
                 
-                response = self.session.post(
+                response = self._post_wrapper(
                     'https://h5api.m.goofish.com/h5/mtop.taobao.idle.pc.detail/1.0/', 
                     params=params, 
                     data=data
